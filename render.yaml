@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: lastapplication
+    name: LASTAPPLICATION
     env: dotnet
     plan: free
     region: oregon
