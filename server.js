@@ -18,6 +18,27 @@ app.get('/', (req, res) => {
   res.json({ message: 'Seva Kendra API Working! 🚀' });
 });
 
+// Health Check API
+app.get('/health', async (req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ 
+      status: 'OK', 
+      database: 'Connected ✅',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development'
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'ERROR', 
+      database: 'Disconnected ❌',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Services API
 app.get('/api/services', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM services');
