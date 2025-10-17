@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: lastapplication
+    env: dotnet
+    plan: free
+    region: oregon
+    branch: main
+    buildCommand: dotnet build -c Release
+    startCommand: dotnet LastApplication.dll
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ConnectionStrings__DefaultConnection
+        value: Host=dpg-d3otadfdiees73c7sgu0-a.singapore-postgres.render.com;Port=5432;Database=myapp_db_42wf;Username=myapp_db_42wf_user;Password=TUbQEG8wD1pp9RqyuHXwDnQjZ5ZtblXE;SSL Mode=Require;Trust Server Certificate=true
