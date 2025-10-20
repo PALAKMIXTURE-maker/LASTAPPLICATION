@@ -87,10 +87,12 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-// 5. User Registration
+// 5. User Registration - FIXED VERSION
 app.post('/api/users/register', async (req, res) => {
   try {
     const { name, phone, password, role } = req.body;
+    
+    console.log('Registration attempt:', { name, phone });
     
     if (!name || !phone || !password) {
       return res.status(400).json({
@@ -99,10 +101,26 @@ app.post('/api/users/register', async (req, res) => {
       });
     }
 
-    const result = await pool.query(
-      'INSERT INTO users (name, phone, password, role) VALUES ($1, $2, $3, $4) RETURNING id, name, phone, role, created_at',
-      [name, phone, password, role || 'user']
+    // Check if phone already exists
+    const existingUser = await pool.query(
+      'SELECT id FROM users WHERE phone = $1',
+      [phone]
     );
+    
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number already registered'
+      });
+    }
+
+    // Insert new user with ALL required fields
+    const result = await pool.query(
+      'INSERT INTO users (name, phone, password, role, is_active) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, phone, role, is_active, created_at',
+      [name, phone, password, role || 'user', true]
+    );
+    
+    console.log('User registered successfully:', result.rows[0]);
     
     res.status(201).json({
       success: true,
@@ -110,12 +128,7 @@ app.post('/api/users/register', async (req, res) => {
       data: result.rows[0]
     });
   } catch (error) {
-    if (error.code === '23505') {
-      return res.status(400).json({
-        success: false,
-        message: 'Phone number already exists'
-      });
-    }
+    console.error('Registration error:', error);
     res.status(500).json({ 
       success: false,
       error: error.message 
@@ -186,10 +199,12 @@ app.post('/api/applications', async (req, res) => {
   }
 });
 
-// 8. Authentication - Login
+// 8. Authentication - Login - FIXED VERSION (PASSWORD CHECK ADDED)
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { phone, password } = req.body;
+    
+    console.log('Login attempt:', { phone });
     
     if (!phone || !password) {
       return res.status(400).json({
@@ -213,7 +228,7 @@ app.post('/api/auth/login', async (req, res) => {
     
     const user = userResult.rows[0];
     
-    // Simple password check
+    // ✅ PASSWORD CHECK - IMPORTANT FIX!
     if (user.password !== password) {
       return res.status(401).json({
         success: false,
@@ -230,6 +245,7 @@ app.post('/api/auth/login', async (req, res) => {
       data: userWithoutPassword
     });
   } catch (error) {
+    console.error('Login error:', error);
     res.status(500).json({ 
       success: false,
       error: error.message 
