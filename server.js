@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const app = express();
@@ -87,7 +89,7 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-// 5. User Registration - FIXED VERSION
+// 5. User Registration - FIXED WITH PASSWORD HASHING
 app.post('/api/users/register', async (req, res) => {
   try {
     const { name, phone, password, role } = req.body;
@@ -114,10 +116,20 @@ app.post('/api/users/register', async (req, res) => {
       });
     }
 
-    // Insert new user with ALL required fields
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Insert new user
     const result = await pool.query(
       'INSERT INTO users (name, phone, password, role, is_active) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, phone, role, is_active, created_at',
-      [name, phone, password, role || 'user', true]
+      [name, phone, hashedPassword, role || 'user', true]
+    );
+    
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: result.rows[0].id, phone: phone },
+      process.env.JWT_SECRET || 'seva-kendra-secret-key-2024',
+      { expiresIn: '24h' }
     );
     
     console.log('User registered successfully:', result.rows[0]);
@@ -125,7 +137,8 @@ app.post('/api/users/register', async (req, res) => {
     res.status(201).json({
       success: true,
       message: 'User registered successfully',
-      data: result.rows[0]
+      token: token,
+      user: result.rows[0]
     });
   } catch (error) {
     console.error('Registration error:', error);
@@ -139,12 +152,25 @@ app.post('/api/users/register', async (req, res) => {
 // 6. Applications API
 app.get('/api/applications', async (req, res) => {
   try {
-    const result = await pool.query(`
+    const { phone } = req.query;
+    
+    let query = `
       SELECT a.*, s.name as service_name, s.fee 
       FROM applications a 
       LEFT JOIN services s ON a.service_id = s.id 
-      ORDER BY a.submitted_at DESC
-    `);
+    `;
+    
+    let params = [];
+    
+    if (phone) {
+      query += ' WHERE a.user_phone = $1';
+      params.push(phone);
+    }
+    
+    query += ' ORDER BY a.created_at DESC';
+    
+    const result = await pool.query(query, params);
+    
     res.json({
       success: true,
       data: result.rows,
@@ -161,7 +187,7 @@ app.get('/api/applications', async (req, res) => {
 // 7. Create Application
 app.post('/api/applications', async (req, res) => {
   try {
-    const { user_name, user_phone, service_id, service_name, aadhaar_number, address } = req.body;
+    const { user_name, user_phone, service_id, service_name, aadhaar_number, address, additional_info } = req.body;
     
     if (!user_name || !user_phone || !service_name) {
       return res.status(400).json({
@@ -174,10 +200,10 @@ app.post('/api/applications', async (req, res) => {
     
     const result = await pool.query(
       `INSERT INTO applications 
-       (user_name, user_phone, service_id, service_name, aadhaar_number, address, registration_no) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7) 
+       (user_name, user_phone, service_id, service_name, aadhaar_number, address, additional_info, registration_no, status) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
        RETURNING *`,
-      [user_name, user_phone, service_id, service_name, aadhaar_number, address, registration_no]
+      [user_name, user_phone, service_id, service_name, aadhaar_number, address, additional_info, registration_no, 'pending']
     );
     
     // Add to application history
@@ -199,7 +225,51 @@ app.post('/api/applications', async (req, res) => {
   }
 });
 
-// 8. Authentication - Login - FIXED VERSION (PASSWORD CHECK ADDED)
+// 8. Update Application Status
+app.put('/api/applications/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, remarks, updated_by } = req.body;
+    
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status is required'
+      });
+    }
+
+    const result = await pool.query(
+      'UPDATE applications SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *',
+      [status, id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Application not found'
+      });
+    }
+    
+    // Add to application history
+    await pool.query(
+      'INSERT INTO application_history (application_id, status, remarks, updated_by) VALUES ($1, $2, $3, $4)',
+      [id, status, remarks || 'Status updated', updated_by || 'admin']
+    );
+    
+    res.json({
+      success: true,
+      message: 'Application status updated successfully',
+      data: result.rows[0]
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      error: error.message 
+    });
+  }
+});
+
+// 9. Authentication - Login - FIXED WITH PASSWORD HASHING
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { phone, password } = req.body;
@@ -228,8 +298,9 @@ app.post('/api/auth/login', async (req, res) => {
     
     const user = userResult.rows[0];
     
-    // ✅ PASSWORD CHECK - IMPORTANT FIX!
-    if (user.password !== password) {
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
       return res.status(401).json({
         success: false,
         message: 'Invalid phone or password'
@@ -239,10 +310,18 @@ app.post('/api/auth/login', async (req, res) => {
     // Remove password from response
     const { password: _, ...userWithoutPassword } = user;
     
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user.id, phone: user.phone },
+      process.env.JWT_SECRET || 'seva-kendra-secret-key-2024',
+      { expiresIn: '24h' }
+    );
+    
     res.json({
       success: true,
       message: 'Login successful',
-      data: userWithoutPassword
+      token: token,
+      user: userWithoutPassword
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -266,5 +345,6 @@ app.listen(PORT, () => {
   console.log(`   POST /api/users/register`);
   console.log(`   GET  /api/applications`);
   console.log(`   POST /api/applications`);
+  console.log(`   PUT  /api/applications/:id/status`);
   console.log(`   POST /api/auth/login`);
 });
