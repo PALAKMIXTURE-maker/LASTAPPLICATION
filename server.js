@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
-const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
@@ -89,12 +88,12 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-// 5. User Registration - FIXED WITH PASSWORD HASHING
+// 5. User Registration - WITHOUT PASSWORD HASHING
 app.post('/api/users/register', async (req, res) => {
   try {
     const { name, phone, password, role } = req.body;
     
-    console.log('Registration attempt:', { name, phone });
+    console.log('📝 Registration attempt:', { name, phone, password });
     
     if (!name || !phone || !password) {
       return res.status(400).json({
@@ -116,13 +115,10 @@ app.post('/api/users/register', async (req, res) => {
       });
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Insert new user
+    // Insert new user (without password hashing)
     const result = await pool.query(
       'INSERT INTO users (name, phone, password, role, is_active) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, phone, role, is_active, created_at',
-      [name, phone, hashedPassword, role || 'user', true]
+      [name, phone, password, role || 'user', true]
     );
     
     // Generate JWT token
@@ -132,7 +128,7 @@ app.post('/api/users/register', async (req, res) => {
       { expiresIn: '24h' }
     );
     
-    console.log('User registered successfully:', result.rows[0]);
+    console.log('✅ User registered successfully:', result.rows[0].name);
     
     res.status(201).json({
       success: true,
@@ -141,7 +137,7 @@ app.post('/api/users/register', async (req, res) => {
       user: result.rows[0]
     });
   } catch (error) {
-    console.error('Registration error:', error);
+    console.error('❌ Registration error:', error);
     res.status(500).json({ 
       success: false,
       error: error.message 
@@ -189,6 +185,8 @@ app.post('/api/applications', async (req, res) => {
   try {
     const { user_name, user_phone, service_id, service_name, aadhaar_number, address, additional_info } = req.body;
     
+    console.log('📦 Application submission:', { user_name, user_phone, service_name });
+    
     if (!user_name || !user_phone || !service_name) {
       return res.status(400).json({
         success: false,
@@ -212,12 +210,15 @@ app.post('/api/applications', async (req, res) => {
       [result.rows[0].id, 'pending', 'Application submitted successfully']
     );
     
+    console.log('✅ Application submitted successfully for:', user_name);
+    
     res.status(201).json({
       success: true,
       message: 'Application submitted successfully',
       data: result.rows[0]
     });
   } catch (error) {
+    console.error('❌ Application submission error:', error);
     res.status(500).json({ 
       success: false,
       error: error.message 
@@ -269,12 +270,12 @@ app.put('/api/applications/:id/status', async (req, res) => {
   }
 });
 
-// 9. Authentication - Login - FIXED WITH PASSWORD HASHING
+// 9. Authentication - Login - WITHOUT PASSWORD HASHING
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { phone, password } = req.body;
     
-    console.log('Login attempt:', { phone });
+    console.log('🔐 Login attempt:', { phone, password });
     
     if (!phone || !password) {
       return res.status(400).json({
@@ -290,6 +291,7 @@ app.post('/api/auth/login', async (req, res) => {
     );
     
     if (userResult.rows.length === 0) {
+      console.log('❌ User not found:', phone);
       return res.status(401).json({
         success: false,
         message: 'Invalid phone or password'
@@ -298,9 +300,10 @@ app.post('/api/auth/login', async (req, res) => {
     
     const user = userResult.rows[0];
     
-    // Verify password
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
+    // SIMPLE PASSWORD CHECK (NO HASHING)
+    console.log('🔍 Password check - Stored:', user.password, 'Provided:', password);
+    if (user.password !== password) {
+      console.log('❌ Password mismatch for user:', user.name);
       return res.status(401).json({
         success: false,
         message: 'Invalid phone or password'
@@ -317,6 +320,8 @@ app.post('/api/auth/login', async (req, res) => {
       { expiresIn: '24h' }
     );
     
+    console.log('✅ Login successful for:', user.name, 'Role:', user.role);
+    
     res.json({
       success: true,
       message: 'Login successful',
@@ -324,7 +329,7 @@ app.post('/api/auth/login', async (req, res) => {
       user: userWithoutPassword
     });
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('❌ Login error:', error);
     res.status(500).json({ 
       success: false,
       error: error.message 
